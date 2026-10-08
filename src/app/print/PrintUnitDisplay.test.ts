@@ -1,0 +1,260 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { LiquidLabelSheetPrint } from './components/LiquidLabelSheetPrint';
+import { OintmentLabelSheetPrint } from './components/OintmentLabelSheetPrint';
+import { MedicineBagPrint } from './components/MedicineBagPrint';
+import type { PharmacyInfo } from './types';
+
+const dummyPharmacyInfo: PharmacyInfo = {
+  name: 'テスト調剤薬局',
+  code: '1234567',
+  phone: '03-1234-5678',
+  postalCode: '100-0001',
+  address: '東京都千代田区千代田1-1',
+  registrationNumber: 'REG-001',
+  pharmacistName: 'テスト薬剤師'
+};
+
+const dummyPatientData = {
+  id: 'p001',
+  name: '患者 太郎',
+  gender: 'male',
+  birthDate: '2020-01-01'
+};
+
+test('LiquidLabelSheetPrint renders mL unit, daily amount, total multiplied by days, and NO tablet unit', () => {
+  // 小児用シロップ 1日量 10mL, 3日分
+  const syrupItem = {
+    itemId: 'item-syrup-1',
+    visitId: 'v1',
+    drugId: 'drug-syrup',
+    drugName: 'アンブロキソール塩酸塩シロップ0.3%',
+    amount: 10,
+    days: 3,
+    unitText: 'mL',
+    usage: '1日3回毎食後',
+    dosageCategory: 'internal' as const
+  };
+
+  const element = React.createElement(LiquidLabelSheetPrint, {
+    patientData: dummyPatientData,
+    liquidItems: [syrupItem],
+    pharmacyInfo: dummyPharmacyInfo,
+    pharmacyAddressLine: dummyPharmacyInfo.address,
+    currentDateStr: '2026/09/04',
+    renderIdentityMark: () => React.createElement('span', null, 'MARK')
+  });
+
+  const html = renderToStaticMarkup(element);
+
+  // 肯定アサート：実HTML内に計算された全量、1日量、日数が正しく現れること
+  assert.ok(html.includes('全量'), '全量ラベルが含まれること');
+  assert.ok(html.includes('30 mL'), '10mL * 3日分 = 30 mL が全量として含まれること');
+  assert.ok(html.includes('1日量'), '1日量ラベルが含まれること');
+  assert.ok(html.includes('10 mL'), '1日量 10 mL が含まれること');
+  assert.ok(html.includes('3日分'), '3日分が含まれること');
+
+  // 否定アサート：水剤ラベルに「錠」という単位が一切混入していないこと
+  assert.ok(!html.includes('錠'), '水剤ラベルに「錠」が一切含まれないこと');
+});
+
+test('OintmentLabelSheetPrint renders g unit, total amount, and NO tablet unit', () => {
+  // 外用軟膏 全量 25g, 7日分
+  const ointmentItem = {
+    itemId: 'item-ointment-1',
+    visitId: 'v1',
+    drugId: 'drug-ointment',
+    drugName: 'ヒルドイドソフト軟膏0.3%',
+    amount: 25,
+    days: 7,
+    unitText: 'g',
+    usage: '1日2回患部に塗布',
+    dosageCategory: 'external' as const
+  };
+
+  const element = React.createElement(OintmentLabelSheetPrint, {
+    patientData: dummyPatientData,
+    ointmentItems: [ointmentItem],
+    pharmacyInfo: dummyPharmacyInfo,
+    pharmacyAddressLine: dummyPharmacyInfo.address,
+    currentDateStr: '2026/09/04',
+    renderIdentityMark: () => React.createElement('span', null, 'MARK')
+  });
+
+  const html = renderToStaticMarkup(element);
+
+  // 肯定アサート：外用全量 25 g がそのまま含まれること（日数が掛けられて過大にならない）
+  assert.ok(html.includes('全量'), '全量ラベルが含まれること');
+  assert.ok(html.includes('25 g'), '外用全量 25 g が含まれること');
+  assert.ok(html.includes('7日分'), '7日分が含まれること');
+
+  // 否定アサート：軟膏ラベルに「錠」という単位が一切混入していないこと
+  assert.ok(!html.includes('錠'), '軟膏ラベルに「錠」が一切含まれないこと');
+  assert.ok(!html.includes('175 g'), '外用薬の全量が日数倍 (25*7=175) されていないこと');
+});
+
+test('OintmentLabelSheetPrint renders multiplied total for daily-like ointment (dosageCategory undefined, unclassified usage) and kills mutation #9', () => {
+  // 1日量 5g, 7日分, dosageCategory 未設定, usage に「塗布」等の外用キーワードなし（「塗る」）
+  const dailyOintmentItem = {
+    itemId: 'item-ointment-daily-1',
+    visitId: 'v1',
+    drugId: 'drug-ointment-daily',
+    drugName: 'プロペト',
+    amount: 5,
+    days: 7,
+    unitText: 'g',
+    usage: '1日2回患部に塗る'
+  };
+
+  const element = React.createElement(OintmentLabelSheetPrint, {
+    patientData: dummyPatientData,
+    ointmentItems: [dailyOintmentItem],
+    pharmacyInfo: dummyPharmacyInfo,
+    pharmacyAddressLine: dummyPharmacyInfo.address,
+    currentDateStr: '2026/09/04',
+    renderIdentityMark: () => React.createElement('span', null, 'MARK')
+  });
+
+  const html = renderToStaticMarkup(element);
+
+  // isDailyAmountItem が true となり、getTotalAmountText により 5g * 7日分 = 35 g が全量として出力されること
+  assert.ok(html.includes('全量'), '全量ラベルが含まれること');
+  assert.ok(html.includes('35 g'), '5g * 7日分 = 35 g が全量として含まれること（getAmountText だと 5 g となり検出可能）');
+  assert.ok(html.includes('7日分'), '7日分が含まれること');
+});
+
+
+test('LiquidLabelSheetPrint annotates the dispensing total when a unit conversion exists', () => {
+  // 医師は「1日3缶」と処方、係数250、薬価単位 mL の実量は 1日 750 mL、14日分
+  const convertedLiquidItem = {
+    itemId: 'item-liquid-conv-1',
+    visitId: 'v1',
+    drugId: 'drug-liquid-conv',
+    drugName: '□□内用液',
+    amount: 750,
+    days: 14,
+    unitText: 'mL',
+    usage: '1日3回毎食後',
+    dosageCategory: 'internal' as const,
+    electronicUnitConversion: {
+      conversionFactor: '250',
+      masterUnitText: 'mL',
+      prescribedAmount: '3',
+      prescribedUnitText: '缶'
+    }
+  };
+
+  const element = React.createElement(LiquidLabelSheetPrint, {
+    patientData: dummyPatientData,
+    liquidItems: [convertedLiquidItem],
+    pharmacyInfo: dummyPharmacyInfo,
+    pharmacyAddressLine: dummyPharmacyInfo.address,
+    currentDateStr: '2026/09/05',
+    renderIdentityMark: () => React.createElement('span', null, 'MARK')
+  });
+
+  const html = renderToStaticMarkup(element);
+
+  // 表示は医師の処方通り（3缶 × 14日分 = 42 缶）
+  assert.ok(html.includes('42 缶'), '処方単位の全量 42 缶 が含まれること');
+  assert.ok(html.includes('3 缶'), '処方単位の1日量 3 缶 が含まれること');
+  // 投薬瓶の中身は調剤単位の実量（750 mL × 14日分 = 10500 mL）
+  assert.ok(html.includes('10500 mL'), '調剤単位の実量 10500 mL が併記されること');
+  assert.ok(!html.includes('錠'), '水剤ラベルに「錠」が一切含まれないこと');
+});
+
+test('LiquidLabelSheetPrint omits the dispensing annotation when there is no unit conversion', () => {
+  // 換算なし＝表示ペアが薬価単位ペアそのものなので、括弧書きは出さない
+  const plainSyrupItem = {
+    itemId: 'item-liquid-plain-1',
+    visitId: 'v1',
+    drugId: 'drug-liquid-plain',
+    drugName: 'アンブロキソール塩酸塩シロップ0.3%',
+    amount: 10,
+    days: 3,
+    unitText: 'mL',
+    usage: '1日3回毎食後',
+    dosageCategory: 'internal' as const
+  };
+
+  const element = React.createElement(LiquidLabelSheetPrint, {
+    patientData: dummyPatientData,
+    liquidItems: [plainSyrupItem],
+    pharmacyInfo: dummyPharmacyInfo,
+    pharmacyAddressLine: dummyPharmacyInfo.address,
+    currentDateStr: '2026/09/05',
+    renderIdentityMark: () => React.createElement('span', null, 'MARK')
+  });
+
+  const html = renderToStaticMarkup(element);
+
+  assert.ok(html.includes('30 mL'), '全量 30 mL が含まれること');
+  assert.ok(!html.includes('調剤量'), '換算がない明細では調剤量の併記が出ないこと');
+});
+
+test('OintmentLabelSheetPrint renders total amount 14 枚 (not 196) for tape with undefined dosageCategory (PR-E2)', () => {
+  const tapeItem = {
+    itemId: 'item-tape-1',
+    visitId: 'v1',
+    drugId: 'drug-tape-1',
+    drugName: 'モーラステープ20mg',
+    amount: 14,
+    days: 14,
+    unitText: '枚',
+    usage: '1日1回患部に貼る'
+    // dosageCategory is intentionally undefined
+  };
+
+  const element = React.createElement(OintmentLabelSheetPrint, {
+    patientData: dummyPatientData,
+    ointmentItems: [tapeItem],
+    pharmacyInfo: dummyPharmacyInfo,
+    pharmacyAddressLine: dummyPharmacyInfo.address,
+    currentDateStr: '2026/09/06',
+    renderIdentityMark: () => React.createElement('span', null, 'MARK')
+  });
+
+  const html = renderToStaticMarkup(element);
+
+  assert.ok(html.includes('全量'), '全量ラベルが含まれること');
+  assert.ok(html.includes('14 枚'), '外用テープ剤の全量 14 枚 がそのまま含まれること');
+  assert.ok(!html.includes('196 枚'), '14枚 * 14日 = 196 枚 に過大乗算されていないこと');
+});
+
+test('MedicineBagPrint renders external-bag class and 外用薬 ribbon for tape item (PR-E3)', () => {
+  const tapeItem = {
+    itemId: 'item-tape-bag-1',
+    visitId: 'v1',
+    drugId: 'drug-tape-1',
+    drugName: 'モーラステープ20mg',
+    amount: 14,
+    days: 14,
+    unitText: '枚',
+    usage: '1日1回患部に貼る'
+  };
+
+  const usage = '1日1回患部に貼る';
+  const element = React.createElement(MedicineBagPrint, {
+    patientData: dummyPatientData,
+    groupedForBags: {
+      [usage]: [tapeItem]
+    },
+    pharmacyInfo: dummyPharmacyInfo,
+    pharmacyAddressLine: dummyPharmacyInfo.address,
+    receiptRunId: 'RUN-001',
+    dispensingDateStr: '2026/09/06',
+    renderIdentityMark: () => React.createElement('span', null, 'MARK')
+  });
+
+  const html = renderToStaticMarkup(element);
+
+  // external-bag クラスを持ち、リボンに「外用薬」が出ること（「内服薬」でないこと）
+  assert.ok(html.includes('external-bag'), 'テープ剤の薬袋は external-bag クラスを持つこと');
+  assert.ok(!html.includes('internal-bag'), 'テープ剤の薬袋に internal-bag クラスが付かないこと');
+  assert.ok(html.includes('外用薬'), 'リボンに「外用薬」が含まれること');
+  assert.ok(!html.includes('内服薬'), 'リボンに「内服薬」が含まれないこと');
+});
+
+
